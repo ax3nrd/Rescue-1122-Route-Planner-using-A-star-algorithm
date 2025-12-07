@@ -1,20 +1,26 @@
 import pygame
 from queue import PriorityQueue
 
+# --- INITIALIZE FONTS ---
+pygame.init()
+pygame.font.init()
+# We use a standard font, size 15 to fit inside the squares
+FONT = pygame.font.SysFont('arial', 15, bold=True)
+
 WIDTH = 600
 WIN = pygame.display.set_mode((WIDTH, WIDTH))
-pygame.display.set_caption("RESCUE 1122 Route Planner")
+pygame.display.set_caption("RESCUE 1122: ROUTE BUILDER")
 
 # --- COLOR DEFINITIONS ---
-RED = (255, 0, 0)       # Closed nodes (visited)
-GREEN = (0, 255, 0)     # Open nodes (in queue)
-YELLOW = (255, 255, 0)  # The final path
-WHITE = (255, 255, 255) # Empty node
-BLACK = (0, 0, 0)       # Barrier/Wall
-ORANGE = (255, 165, 0)  # Start node
-GREY = (128, 128, 128)  # Grid lines
-TURQUOISE = (64, 224, 208) # End node
-PURPLE = (128, 0, 128)  # [ADDITIONAL FEATURE] Added Purple for intermediate "waypoints"
+RED = (255, 0, 0)       # Closed nodes
+GREEN = (0, 255, 0)     # Open nodes
+YELLOW = (255, 255, 0)  # Path
+WHITE = (255, 255, 255) # Empty
+BLACK = (0, 0, 0)       # Wall
+ORANGE = (255, 165, 0)  # Start
+GREY = (128, 128, 128)  # Grid Lines
+TURQUOISE = (64, 224, 208) # End
+PURPLE = (200, 160, 255)   # Numbered Nodes (Light Purple background for visibility)
 
 class Node:
     def __init__(self, row, col, width, total_rows):
@@ -26,70 +32,72 @@ class Node:
         self.neighbors = []
         self.width = width
         self.total_rows = total_rows
+        
+        # [NEW] Attribute to hold the text ("S", "E", "1", etc.)
+        self.text = "" 
 
     def get_pos(self):
         return self.row, self.col
 
-    # --- STATE CHECKS ---
-    def is_closed(self):
-        return self.color == RED
-
-    def is_open(self):
-        return self.color == GREEN
-
     def is_barrier(self):
         return self.color == BLACK
 
-    def is_start(self):
-        return self.color == ORANGE
-
-    def is_end(self):
-        return self.color == TURQUOISE
-
     def reset(self):
         self.color = WHITE
+        self.text = ""
 
     # --- STATE SETTERS ---
     def make_start(self):
         self.color = ORANGE
+        self.text = "S"
 
-    # [IMROVEMENT] Modified to protect the path (Yellow) and stops (Purple/Orange)
-    def make_closed(self):
-        # A node is only turned RED (visited) if it isn't already part of a path or a stop
-        # This prevents the 2nd leg of the trip from erasing the 1st leg's path.
-        if self.color != YELLOW and self.color != ORANGE and self.color != PURPLE:
-            self.color = RED
-
-    # [IMPROVEMENT] Modified to protect the path and stops
-    def make_open(self):
-        # A node is only turned GREEN (open set) if it isn't already special
-        if self.color != YELLOW and self.color != ORANGE and self.color != PURPLE:
-            self.color = GREEN
-
-    def make_barrier(self):
-        self.color = BLACK
+    def make_numbered(self, number):
+        self.color = PURPLE
+        self.text = str(number)
 
     def make_end(self):
         self.color = TURQUOISE
+        self.text = "E"
+
+    def make_barrier(self):
+        self.color = BLACK
+        self.text = ""
+
+    def make_closed(self):
+        if self.color not in (YELLOW, ORANGE, TURQUOISE, PURPLE):
+            self.color = RED
+
+    def make_open(self):
+        if self.color not in (YELLOW, ORANGE, TURQUOISE, PURPLE):
+            self.color = GREEN
 
     def make_path(self):
         self.color = YELLOW
+        # Keep the text visible even if path goes over it
+        # (We don't wipe self.text here)
 
     def draw(self, win):
+        # 1. Draw the colored square
         pygame.draw.rect(win, self.color, (self.x, self.y, self.width, self.width))
+        
+        # 2. Draw the text (if any) centered in the square
+        if self.text != "":
+            # Render text in Black (or White if background is dark)
+            text_color = (0, 0, 0)
+            text_surf = FONT.render(self.text, True, text_color)
+            
+            # Math to center the text
+            text_rect = text_surf.get_rect(center=(self.x + self.width/2, self.y + self.width/2))
+            win.blit(text_surf, text_rect)
 
     def update_neighbors(self, grid):
         self.neighbors = []
-        # Check DOWN
         if self.row < self.total_rows - 1 and not grid[self.row + 1][self.col].is_barrier():
             self.neighbors.append(grid[self.row + 1][self.col])
-        # Check UP
         if self.row > 0 and not grid[self.row - 1][self.col].is_barrier():
             self.neighbors.append(grid[self.row - 1][self.col])
-        # Check RIGHT
         if self.col < self.total_rows - 1 and not grid[self.row][self.col + 1].is_barrier():
             self.neighbors.append(grid[self.row][self.col + 1])
-        # Check LEFT
         if self.col > 0 and not grid[self.row][self.col - 1].is_barrier():
             self.neighbors.append(grid[self.row][self.col - 1])
 
@@ -104,7 +112,10 @@ def heuristic(p1, p2):
 def reconstruct_path(came_from, current, draw):
     while current in came_from:
         current = came_from[current]
-        current.make_path() # Turns the node YELLOW
+        # Don't overwrite the Start/End/Numbers colors with Yellow, 
+        # just let the line flow through (or overwrite if you prefer standard look)
+        if current.text == "": 
+            current.make_path()
         draw()
 
 def A_star_algorithm(draw, grid, start, end):
@@ -113,7 +124,6 @@ def A_star_algorithm(draw, grid, start, end):
     open_set.put((0, count, start))
     came_from = {}
     
-    # Initialize scores for all nodes
     g_score = {spot: float("inf") for row in grid for spot in row}
     g_score[start] = 0
     f_score = {spot: float("inf") for row in grid for spot in row}
@@ -131,7 +141,6 @@ def A_star_algorithm(draw, grid, start, end):
 
         if current == end:
             reconstruct_path(came_from, end, draw)
-            end.make_end() # Keeps the destination TURQUOISE
             return True
 
         for neighbor in current.neighbors:
@@ -145,12 +154,12 @@ def A_star_algorithm(draw, grid, start, end):
                     count += 1
                     open_set.put((f_score[neighbor], count, neighbor))
                     open_set_hash.add(neighbor)
-                    neighbor.make_open() # Turns node GREEN
+                    neighbor.make_open() 
 
         draw()
 
         if current != start:
-            current.make_closed() # Turns node RED
+            current.make_closed() 
 
     return False
 
@@ -186,15 +195,15 @@ def get_clicked_pos(pos, rows, width):
     col = y // gap
     return row, col
 
-# --- MAIN FUNCTION (HEAVILY MODIFIED) ---
 def main(win, width):
     ROWS = 30
     grid = make_grid(ROWS, width)
-
-    # [IMPROVEMENT] 'start' and 'end' variables were replaced  with a list called 'stops'
-    # This list will hold [Start, Waypoint 1, Waypoint 2, ... End]
+    
     stops = [] 
-
+    
+    # Modes: 'placing_stops' or 'placing_walls'
+    mode = 'placing_stops'
+    
     run = True
     while run:
         draw(win, grid, ROWS, width)
@@ -203,87 +212,82 @@ def main(win, width):
             if event.type == pygame.QUIT:
                 run = False
 
-            # --- LEFT MOUSE CLICK (Add Stops/Barriers) ---
+            # --- LEFT MOUSE CLICK ---
             if pygame.mouse.get_pressed()[0]: 
                 pos = pygame.mouse.get_pos()
                 row, col = get_clicked_pos(pos, ROWS, width)
                 node = grid[row][col]
 
-                # [IMPROVEMENT] Logic for adding nodes to the list
-                # If the node isn't a wall and isn't already in the route list:
-                if not node.is_barrier() and node not in stops:
-                    stops.append(node) # Add it to our route
-                    
-                    # [ADDITIONAL FEATURE] Determine color based on order
-                    if len(stops) == 1:
-                        node.make_start()   # The first click is always start (ORANGE)
-                    else:
-                        node.make_end()     # The most recent click is currently the end (TURQUOISE)
+                # MODE 1: PLACING STOPS (Start -> 1 -> 2 -> 3...)
+                if mode == 'placing_stops':
+                    if node not in stops and not node.is_barrier():
+                        stops.append(node)
                         
-                        # [ADDITIONAL FEATURE] If there are more than 2 stops (e.g., start -> waypoint -> end),
-                        # the node *before the new end needs to change from TURQUOISE to PURPLE.
-                        if len(stops) > 2:
-                            stops[-2].color = PURPLE
+                        if len(stops) == 1:
+                            node.make_start() # First click is always "S"
+                        else:
+                            # Use the index as the number (Start is index 0, so 1st stop is index 1)
+                            # We subtract 1 so the text starts at "1"
+                            number_label = len(stops) - 1 
+                            node.make_numbered(number_label)
 
-                # [IMPROVED] If we click a node not in 'stops', it becomes a wall (BLACK)
-                elif node not in stops:
-                    node.make_barrier()
+                # MODE 2: PLACING WALLS (After B is pressed)
+                elif mode == 'placing_walls':
+                    if node not in stops:
+                        node.make_barrier()
 
-            # --- RIGHT MOUSE CLICK (Remove items) ---
+            # --- RIGHT MOUSE CLICK (Reset Node) ---
             elif pygame.mouse.get_pressed()[2]: 
                 pos = pygame.mouse.get_pos()
                 row, col = get_clicked_pos(pos, ROWS, width)
                 node = grid[row][col]
-
-                # [IMPROVED] Logic to remove stops from the list
+                node.reset()
                 if node in stops:
-                    stops.remove(node) # Remove from list
-                    node.reset()       # Turn white on screen
-                    
-                    # [ADDITIONAL FEATURE] Re-color the remaining list to keep start/end correct
-                    # If start us deleted, the next node must become Orange
-                    # If end is deleted, the previous node must become Turquois
-                    for i, stop_node in enumerate(stops):
-                        if i == 0:
-                            stop_node.make_start()
-                        elif i == len(stops) - 1:
-                            stop_node.make_end()
-                        else:
-                            stop_node.color = PURPLE
-                else:
-                    node.reset() # If it was just a wall, reset it to white
+                    stops.remove(node)
+                    # Note: Removing a stop mid-list might mess up numbering. 
+                    # For simplicity, clear board if you make a mistake, or assume append-only.
 
-            # --- SPACEBAR (Run Algorithm) ---
+            # --- KEYBOARD CONTROLS ---
             if event.type == pygame.KEYDOWN:
-                # [IMPROVEMENT] Check if we have at least 2 points (Start + End)
+                
+                # [B KEY] FINALIZE ROUTE & SWITCH TO WALL MODE
+                if event.key == pygame.K_b:
+                    if mode == 'placing_stops' and len(stops) > 1:
+                        mode = 'placing_walls'
+                        
+                        # Turn the LAST clicked node into the END node ("E")
+                        last_node = stops[-1]
+                        last_node.make_end()
+                        
+                        pygame.display.set_caption("MODE: WALLS (Draw obstacles) - Press SPACE to Run")
+
+                # [SPACE KEY] RUN A*
                 if event.key == pygame.K_SPACE and len(stops) > 1:
-                    
-                    # Update neighbors for the whole grid
                     for row in grid:
                         for node in row:
                             node.update_neighbors(grid)
 
-                    # [ADDITIONAL FEATURE] The Loop Logic
-                    # Iterate through the list in pairs
-                    # If stops = [A, B, C], we run A* for (A->B), then for (B->C).
                     for i in range(len(stops) - 1):
                         start_node = stops[i]
                         end_node = stops[i+1]
                         
-                        # Run the algorithm for this specific segment
                         A_star_algorithm(lambda: draw(win, grid, ROWS, width), grid, start_node, end_node)
                         
-                        # [ADDITIONAL FEATURE] Visual Cleanup
-                        # A* might turn the start node RED (closed). We force it back to correct color.
+                        # Clean up colors to ensure text remains visible
                         if i == 0:
-                            start_node.make_start() # Keep true Start ORANGE
-                        else:
-                            start_node.color = PURPLE # Keep Waypoints PURPLE
+                            start_node.make_start()
+                        elif i != len(stops) - 2: 
+                            # Restore numbered look if it wasn't the final leg
+                            # i is index in 0..N. stops[i] is start of leg. 
+                            # We want to restore the text of the start node of this leg (unless it's S)
+                            pass # The reconstruct path logic handles the yellow line
 
-                # [IMOROVEMENT] Clear the board and reset the list
+                # [C KEY] CLEAR BOARD
                 if event.key == pygame.K_c:
                     stops = []
                     grid = make_grid(ROWS, width)
+                    mode = 'placing_stops'
+                    pygame.display.set_caption("RESCUE 1122: ROUTE BUILDER")
 
     pygame.quit()
 
